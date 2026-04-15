@@ -51,7 +51,7 @@ No vídeo abaixo, demonstramos todo o circuito em funcionamento, provando a efic
 
 🔗 **Link do Vídeo no YouTube (Até 5 minutos):** *[INSERIR O SEU LINK DO YOUTUBE AQUI]*
 
-🔗 **Link do Projeto no Wokwi:** *[INSERIR O LINK DO SEU PROJETO SALVO NO WOKWI]*
+🔗 **Link do Projeto no Wokwi:** *https://wokwi.com/projects/461237221191174145*
 
 ---
 *Projeto desenvolvido para o FIAP PBL - Fase 2.*
