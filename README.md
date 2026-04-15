@@ -11,8 +11,8 @@ Para esta fase, simulada na plataforma Wokwi, criamos um sistema inteligente foc
 Devido às limitações de sensores agrícolas nativos na plataforma, foram feitas substituições didáticas conforme as diretrizes do projeto:
 * **Microcontrolador:** 1x ESP32.
 * **Sensor de Umidade do Solo:** 1x DHT22 (que originalmente mede umidade do ar, adotado aqui para o solo).
-* **Sensor de pH:** 1x Sensor LDR (Light Dependent Resistor), mapeado via código de dados analógicos (luminosidade) para a escala de pH de 0.0 a 14.0.
-* **Nutrientes (NPK):** 3x Botões Verdes (Pushbuttons) operando em formato digital ("true" ou "false" / pressionado ou não) representando Nitrogênio (N), Fósforo (P) e Potássio (K).
+* **Sensor de pH:** 1x Sensor LDR, mapeado via código de dados analógicos (luminosidade) para a escala de pH de 0.0 a 14.0.
+* **Nutrientes (NPK):** 3x Botões operando em formato digital ("true" ou "false" / pressionado ou não) representando Nitrogênio (N - Botão Branco), Fósforo (P - Botão Cinza) e Potássio (K - Botão Vermelho).
 * **Bomba de Irrigação:** 1x Relé Módulo Azul.
 
 ### 📸 Imagem do Circuito
@@ -33,7 +33,7 @@ A laranjeira é sensível tanto ao estresse hídrico quanto ao encharcamento. O 
 * **Entre 50% e 80%:** Estado mantido, sem necessidade de alterações.
 
 ### 2. Monitoramento Químico (pH e NPK)
-O pH ideal para a máxima absorção de nutrientes na laranjeira é levemente ácido, entre **5.5 e 6.5**. Como os níveis de NPK afetam o pH da terra, o sistema fornece alertas interativos no Monitor Serial guiando as ações do agricultor (ou do usuário na simulação):
+O pH ideal para a máxima absorção de nutrientes na laranjeira é levemente ácido, entre **5.5 e 6.5**. Como os níveis de NPK afetam o pH da terra, o sistema fornece alertas interativos no Monitor Serial guiando as ações do agricultor:
 
 | Leitura do pH (LDR) | Classificação | Ação Recomendada pelo Sistema |
 | :--- | :--- | :--- |
@@ -41,7 +41,7 @@ O pH ideal para a máxima absorção de nutrientes na laranjeira é levemente á
 | **Entre 5.5 e 6.5** | **Ideal** | Acionar o botão **Fósforo (P)**, atuando como nutriente de manutenção para raízes. |
 | **Acima de 6.5** | Alcalino | Acionar o botão **Nitrogênio (N)**, conhecido por acidificar (baixar) o pH do solo. |
 
-**Mecânica da Simulação (Regra de Ouro):** Como não possuímos um sensor de pH real, a dinâmica da simulação exige interação manual. Quando o sistema pede a inserção de um nutriente (apertar os botões N, P ou K), o usuário deve **alterar manualmente o nível do sensor LDR**, comprovando a tese de que a adição de nutrientes altera o pH da terra.
+**Mecânica da Simulação:** Como não possuímos um sensor de pH real, a dinâmica da simulação exige interação manual. Quando o sistema pede a inserção de um nutriente (apertar os botões N, P ou K), o usuário deve **alterar manualmente o nível do sensor LDR**, comprovando a tese de que a adição de nutrientes altera o pH da terra.
 
 ---
 
@@ -54,4 +54,4 @@ No vídeo abaixo, demonstramos todo o circuito em funcionamento, provando a efic
 🔗 **Link do Projeto no Wokwi:** *https://wokwi.com/projects/461237221191174145*
 
 ---
-*Projeto desenvolvido para o FIAP PBL - Fase 2.*
+*Projeto desenvolvido para a FIAP - Fase 2.*
