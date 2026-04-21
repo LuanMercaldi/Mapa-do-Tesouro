@@ -19,7 +19,6 @@ Devido às limitações de sensores agrícolas nativos na plataforma, foram feit
 
 <img width="502" height="532" alt="image" src="https://github.com/user-attachments/assets/82b1db2e-6b1c-4c3e-b0ee-8573ee2404a1" />
 
-
 ---
 
 ## 🧠 Lógica de Negócio e Regras de Decisão
@@ -45,13 +44,38 @@ O pH ideal para a máxima absorção de nutrientes na laranjeira é levemente á
 
 ---
 
+## 🚀 Programa "Ir Além" (Data Science e IoT)
+Para trazer uma visão prática do uso da IoT e da IA na otimização de recursos agrícolas, nosso grupo desenvolveu de forma total os dois itens opcionais do projeto:
+
+### 🌩️ Ir Além 1: Integração Python com API Pública
+Integramos dados meteorológicos obtidos da API pública **OpenWeather** usando Python para prever condições climáticas adversas e ajustar a irrigação automaticamente.
+* **Objetivo:** Se houver previsão de chuva, o sistema suspende a irrigação para economizar recursos (água e energia).
+* **Solução Técnica:** Como a integração automática direta não é trivial no plano gratuito do Wokwi, implementamos a transferência de dados via Monitor Serial do simulador ESP32. O código lê a previsão gerada pelo Python e, utilizando as funções `Serial.available()` e `Serial.read()`, recebe comandos do usuário via teclado ('C' para chuva, 'S' para sol) para intervir na bomba em tempo real.
+
+### 📊 Ir Além 2: Análise Estatística em R (Data Science)
+Implementamos uma análise estatística em linguagem **R** para decidir matematicamente se a bomba de irrigação deve ser ligada, agregando conhecimentos de Data Science ao projeto IoT.
+* **Base de Dados:** Simulamos um banco de dados histórico com informações de fontes públicas do Agronegócio (como EMBRAPA e MAPA).
+* **Modelo Utilizado:** Desenvolvemos um algoritmo de **Regressão Logística** que cruza variáveis atuais de umidade do solo e temperatura para calcular a probabilidade exata da necessidade de acionamento do relé azul, embasando a lógica do nosso hardware com inteligência de dados.
+
+---
+
+## 📁 Estrutura do Repositório e Entregáveis
+Os arquivos deste projeto estão organizados da seguinte forma no repositório:
+* `sketch.ino`: Código-fonte C/C++ desenvolvido e rodando no ESP32.
+* `previsao_tempo.py`: Script do Programa Ir Além 1 (Python + Consulta de API OpenWeather).
+* `analise_estatistica.R`: Script do Programa Ir Além 2 (Regressão Logística em R).
+* `README.md`: Documentação completa do projeto.
+
+---
+
 ## 🎥 Demonstração de Funcionamento
 
-No vídeo abaixo, demonstramos todo o circuito em funcionamento, provando a eficácia do código na tomada de decisão do relé baseada no DHT22 e a interatividade dos botões de NPK com as mudanças manuais efetuadas no LDR (simulador de pH).
+No vídeo abaixo, demonstramos todo o circuito em funcionamento, provando a eficácia do código na tomada de decisão do relé baseada no DHT22, a interatividade dos botões de NPK com as mudanças manuais efetuadas no LDR (simulador de pH) e a atuação do programa de Previsão do Tempo via teclado.
 
-🔗 **Link do Vídeo no YouTube (Até 5 minutos):** *[INSERIR O SEU LINK DO YOUTUBE AQUI]*
+🔗 **Link do Vídeo no YouTube (Até 5 minutos):** *https://youtu.be/yDUCwO61Y7g*
 
 🔗 **Link do Projeto no Wokwi:** *https://wokwi.com/projects/461237221191174145*
 
 ---
-*Projeto desenvolvido para a FIAP - Fase 2.*
+*Projeto desenvolvido para a FIAP - Fase 2 por integrantes da Startup FarmTech Solutions.*
+```
