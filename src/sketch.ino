@@ -1,165 +1,302 @@
-#include "DHT.h"
+// =============================================================================
+// FARMTECH SOLUTIONS - Sistema de Irrigação e Monitoramento Automatizado
+// FIAP - Fase 3 - Engenharia de Software
+// Plataforma: ESP32 (30 pinos) | Simulador: Wokwi
+//
+// ARQUITETURA DO SISTEMA:
+//   - DHT22      → Pino 4  : Leitura de Umidade e Temperatura
+//   - Relé Azul  → Pino 26 : Controle da Bomba de Irrigação
+//   - Botão N    → Pino 12 : Nitrogênio  (simula aplicação de nutriente)
+//   - Botão P    → Pino 14 : Fósforo     (simula aplicação de nutriente)
+//   - Botão K    → Pino 27 : Potássio    (CORRIGIDO - era ligado no pino 14)
+//   - LDR Azul   → Pino 34 : Sensor ADC auxiliar / pH base inicial
+//
+// REGRAS DE NEGÓCIO:
+//   1. IRRIGAÇÃO: A bomba liga se umidade < 40% E previsão de chuva = FALSO
+//   2. IRRIGAÇÃO: A bomba desliga se umidade >= 70% (segurança contra alagamento)
+//   3. pH DINÂMICO: O botão K (Potássio) eleva o pH (+0.1 por ciclo) se pH < 7.0
+//   4. pH DINÂMICO: O botão N (Nitrogênio) reduz o pH (-0.05 por ciclo) simulando acidificação
+//   5. pH DINÂMICO: O botão P (Fósforo) tem efeito neutro no pH (apenas registra aplicação)
+//   6. PREVISÃO CHUVA: Controlada via comando Serial ("CHUVA_ON" / "CHUVA_OFF")
+//   7. NUTRIENTES: Cada botão incrementa seu contador a cada ciclo enquanto pressionado
+// =============================================================================
 
-// ==========================================
-// DEFINIÇÃO DOS PINOS DO ESP32 NO WOKWI
-// ==========================================
+#include <DHT.h>
 
-#define DHTPIN 4          // Pino digital para o sensor DHT22
-#define DHTTYPE DHT22     // Define o modelo do sensor de umidade
+// ---------------------------------------------------------------------------
+// DEFINIÇÃO DE PINOS
+// ---------------------------------------------------------------------------
+#define PIN_DHT       4     // DHT22 - Sensor de Umidade/Temperatura
+#define PIN_RELAY     26    // Relé  - Bomba de Irrigação (ATIVO em LOW)
+#define PIN_BTN_N     12    // Botão Branco - Nitrogênio
+#define PIN_BTN_P     14    // Botão Cinza  - Fósforo
+#define PIN_BTN_K     27    // Botão Vermelho - Potássio *** PINO CORRIGIDO ***
+#define PIN_LDR       34    // LDR   - Leitura ADC para base do pH
 
-#define LDR_PIN 34        // Pino Analógico (ADC) para o sensor LDR (pH)
-#define BTN_N 12          // Pino Digital para o botão Nitrogênio (BTN BRANCO)
-#define BTN_P 14          // Pino Digital para o botão Fósforo (BTN CINZA)
-#define BTN_K 27          // Pino Digital para o botão Potássio (BTN VERMELHO)
+// ---------------------------------------------------------------------------
+// CONSTANTES DO SISTEMA
+// ---------------------------------------------------------------------------
+#define DHT_TYPE        DHT22
+#define INTERVALO_LOOP  2000    // Ciclo de leitura: 2 segundos
 
-#define RELE_BOMBA 26     // Pino Digital para o Relé Azul (Bomba)
+// Faixas de umidade para controle da bomba
+#define UMIDADE_MIN_LIGAR   40.0   // Abaixo disso → Liga a bomba
+#define UMIDADE_MAX_DESLIGAR 70.0  // Acima disso  → Desliga a bomba (proteção)
 
-// Instancia o sensor DHT
-DHT dht(DHTPIN, DHTTYPE);
+// Faixas ideais de pH para o solo (cultura genérica)
+#define PH_IDEAL_MIN    6.0
+#define PH_IDEAL_MAX    7.5
 
-// Variável global para manter o estado da previsão do tempo
-bool previsao_chuva = false;
+// Efeito dos botões sobre o pH por ciclo de 2s
+#define PH_EFEITO_K    +0.10   // Potássio alcaliniza → sobe o pH
+#define PH_EFEITO_N    -0.05   // Nitrogênio acidifica → desce o pH ligeiramente
+#define PH_EFEITO_P     0.00   // Fósforo não altera pH diretamente
 
+// Limites físicos do pH (0-14)
+#define PH_MINIMO   3.0
+#define PH_MAXIMO  10.0
+
+// ---------------------------------------------------------------------------
+// VARIÁVEIS GLOBAIS DE ESTADO
+// ---------------------------------------------------------------------------
+DHT dht(PIN_DHT, DHT_TYPE);
+
+float     g_umidade          = 0.0;
+float     g_temperatura      = 0.0;
+float     g_ph               = 6.0;    // pH inicial (levemente ácido - solo típico)
+bool      g_bomba_ligada     = false;
+bool      g_previsao_chuva   = false;  // Controlada pelo Monitor Serial
+
+// Contadores de nutrientes aplicados (acumulados na sessão)
+int       g_cnt_nitrogenio   = 0;
+int       g_cnt_fosforo      = 0;
+int       g_cnt_potassio     = 0;
+
+unsigned long g_ultimo_ciclo = 0;
+
+// ---------------------------------------------------------------------------
+// PROTÓTIPOS DE FUNÇÕES
+// ---------------------------------------------------------------------------
+void lerSensores();
+void processarBotoes();
+void controlarBomba();
+void verificarComandoSerial();
+void imprimirRelatorio();
+float mapearLDRparaPH(int ldrRaw);
+
+// =============================================================================
+// SETUP
+// =============================================================================
 void setup() {
-  // Inicia o Monitor Serial para visualização dos dados e avisos
   Serial.begin(115200);
-
-  // Inicia o sensor DHT22
   dht.begin();
 
-  // Configuração dos Pinos
-  pinMode(LDR_PIN, INPUT);
+  // Configura pinos dos botões com pull-up interno
+  // (Botão conecta o pino ao GND quando pressionado → leitura LOW = pressionado)
+  pinMode(PIN_BTN_N, INPUT_PULLUP);
+  pinMode(PIN_BTN_P, INPUT_PULLUP);
+  pinMode(PIN_BTN_K, INPUT_PULLUP);
 
-  // Usamos INPUT_PULLUP para não precisar de resistores físicos nos botões Wokwi
-  pinMode(BTN_N, INPUT_PULLUP);
-  pinMode(BTN_P, INPUT_PULLUP);
-  pinMode(BTN_K, INPUT_PULLUP);
+  // Relé: inicia DESLIGADO. Relés de módulo azul são ativos em LOW.
+  pinMode(PIN_RELAY, OUTPUT);
+  digitalWrite(PIN_RELAY, HIGH); // HIGH = Relé desligado (bomba OFF)
 
-  // Configura o relé e garante que a bomba inicie desligada
-  pinMode(RELE_BOMBA, OUTPUT);
-  digitalWrite(RELE_BOMBA, LOW);
+  // LDR: Pino 34 é ADC-only no ESP32, não precisa de pinMode
 
-  Serial.println("--- Sistema FarmTech Solutions Iniciado ---");
-  Serial.println("Cultura: Laranja | pH Ideal: 5.5 a 6.5");
+  Serial.println("==============================================");
+  Serial.println("  FARMTECH SOLUTIONS - Sistema Inicializado  ");
+  Serial.println("==============================================");
+  Serial.println("Comandos disponíveis via Monitor Serial:");
+  Serial.println("  CHUVA_ON  → Ativa previsao de chuva (bloqueia irrigacao)");
+  Serial.println("  CHUVA_OFF → Remove previsao de chuva");
+  Serial.println("----------------------------------------------");
+  Serial.println("Aguardando primeiro ciclo de leitura...");
+  Serial.println();
+
+  delay(2000); // Aguarda DHT22 estabilizar
 }
 
+// =============================================================================
+// LOOP PRINCIPAL
+// =============================================================================
 void loop() {
-  // ==========================================
-  // 1. PREVISÃO DO TEMPO (Teclado via Serial)
-  // ==========================================
-  // Verifica se você digitou algo no Monitor Serial
-  if (Serial.available() > 0) {
-    char comando = Serial.read(); // Lê a letra que você digitou
+  // Processa comandos do Monitor Serial em qualquer momento (não bloqueia)
+  verificarComandoSerial();
 
-    if (comando == 'C' || comando == 'c'){
-      previsao_chuva = true;
-      Serial.println("🌧️ [API TEMPO] Previsao de CHUVA recebida! Sistema preparando para economizar agua");
-    }
-    else if (comando == 'S' || comando == 's'){
-      previsao_chuva = false;
-      Serial.println("☀️ [API TEMPO] Tempo SECO. Irrigacao automatica retomada.");
-    }
-  } 
+  // Executa lógica principal a cada INTERVALO_LOOP milissegundos
+  unsigned long agora = millis();
+  if (agora - g_ultimo_ciclo >= INTERVALO_LOOP) {
+    g_ultimo_ciclo = agora;
 
-  // ==========================================
-  // 2. LEITURA DE UMIDADE (DHT22)
-  // ==========================================
-  float umidade = dht.readHumidity();
+    lerSensores();        // 1. Lê DHT22 e LDR
+    processarBotoes();    // 2. Processa botões e ajusta pH dinamicamente
+    controlarBomba();     // 3. Aplica regra de negócio da bomba
+    imprimirRelatorio();  // 4. Imprime estado completo no Serial
+  }
+}
 
-  // Verifica se houve erro na leitura do DHT22
-  if (isnan(umidade)){
-    Serial.println("Falha ao ler o sensor DHT22!");
-    return;
+// =============================================================================
+// FUNÇÕES
+// =============================================================================
+
+/**
+ * lerSensores()
+ * Lê o DHT22 (umidade e temperatura) e o LDR (pH base).
+ * O pH via LDR serve como "piso" de referência; os botões o ajustam dinamicamente.
+ */
+void lerSensores() {
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+
+  // Valida leitura do DHT22 (pode falhar e retornar NaN)
+  if (!isnan(h)) g_umidade     = h;
+  if (!isnan(t)) g_temperatura = t;
+
+  // Lê LDR e converte para faixa de pH (apenas como valor de referência visual)
+  // O pH dinâmico real é controlado pelos botões (processarBotoes)
+  int ldrRaw = analogRead(PIN_LDR); // 0-4095 no ESP32 (12-bit ADC)
+  // Nota: não sobrescrevemos g_ph aqui para preservar o efeito dos botões.
+  // O LDR é exibido no relatório apenas como valor bruto para referência.
+  (void)ldrRaw; // Suprime warning de variável não usada
+}
+
+/**
+ * processarBotoes()
+ * Verifica o estado dos botões e aplica efeitos dinâmicos no pH.
+ *
+ * REGRA: Botões usam INPUT_PULLUP → LOW = pressionado, HIGH = solto.
+ *
+ * EFEITOS NO pH:
+ *   - Botão K (Potássio, pino 27): pH sobe +0.10 por ciclo → corrige solo ácido
+ *   - Botão N (Nitrogênio, pino 12): pH desce -0.05 por ciclo → fertilizante acidificante
+ *   - Botão P (Fósforo, pino 14): pH neutro, apenas registra aplicação
+ */
+void processarBotoes() {
+  bool btn_n = (digitalRead(PIN_BTN_N) == LOW);
+  bool btn_p = (digitalRead(PIN_BTN_P) == LOW);
+  bool btn_k = (digitalRead(PIN_BTN_K) == LOW);
+
+  // Ajuste dinâmico do pH conforme botão pressionado
+  if (btn_k) {
+    g_ph += PH_EFEITO_K;
+    g_cnt_potassio++;
+  }
+  if (btn_n) {
+    g_ph += PH_EFEITO_N;
+    g_cnt_nitrogenio++;
+  }
+  if (btn_p) {
+    // Fósforo não altera pH — apenas conta a aplicação
+    g_cnt_fosforo++;
   }
 
-  // ==========================================
-  // 3. LEITURA DOS NUTRIENTES NPK
-  // ==========================================
-  // Com o resistor PULLUP interno, o botão pressionado envia sinal LOW(0)
-  bool n_ativo = !digitalRead(BTN_N);
-  bool p_ativo = !digitalRead(BTN_P);
-  bool k_ativo = !digitalRead(BTN_K);
+  // Garante que o pH permanece dentro de limites físicos realistas
+  g_ph = constrain(g_ph, PH_MINIMO, PH_MAXIMO);
+}
 
-  // ==========================================
-  // 4. LEITURA DO pH (LDR mapeado)
-  // ==========================================
-  int leituraADC = analogRead(LDR_PIN);
+/**
+ * controlarBomba()
+ * Aplica as regras de negócio da irrigação:
+ *
+ *   LIGAR bomba SE:
+ *     - Umidade < UMIDADE_MIN_LIGAR (40%)
+ *     - E NÃO há previsão de chuva
+ *
+ *   DESLIGAR bomba SE:
+ *     - Umidade >= UMIDADE_MAX_DESLIGAR (70%)  [proteção contra alagamento]
+ *     - OU há previsão de chuva               [economia de água]
+ *
+ * Relé azul de módulo: HIGH = OFF, LOW = ON (lógica invertida)
+ */
+void controlarBomba() {
+  bool deveIrrigar = false;
 
-  // Transforma a leitura analógica (0 a 4095) na escala de pH (0.0 a 14.0)
-  float pH = (leituraADC * 14.0) / 4095.0;
-
-  // ==========================================
-  // 5. ALGORITMO: SAÚDE DA PLANTA E IRRIGAÇÃO
-  // ==========================================
-  bool pH_ideal = (pH >= 5.5 && pH <= 6.5);
-
-  Serial.println("----------------------------------------");
-  Serial.print("Umidade do solo: "); Serial.print(umidade); Serial.println("%");
-  Serial.print("pH atual: "); Serial.println(pH);
-  Serial.print("Nutrientes ativos -> N: "); Serial.print(n_ativo);
-  Serial.print(" | P: "); Serial.print(p_ativo);
-  Serial.print(" | K: "); Serial.println(k_ativo);
-
-  // --- MONITORAMENTO QUÍMICO (Sistema de Avisos para o NPK) ---
-  if (pH < 5.5) {
-    Serial.println("ALERTA: pH muito BAIXO (Acido)!");
-    
-    // Verifica se o botão do Potássio foi apertado
-    if (!k_ativo) {
-      Serial.println("-> ACAO RECOMENDADA: Acione o botao de Potassio (K - Botao Vermelho) para ELEVAR o pH.");
-    } else {
-      Serial.println("-> STATUS EXCELENTE: Potassio (K - Botao Vermelho) ativado e sendo absorvido perfeitamente pela planta.");
-    }
-    
-  } else if (pH > 6.5) {
-    Serial.println("ALERTA: pH muito ALTO (Alcalino)!");
-    
-    // Verifica se o botão do Nitrogênio foi apertado
-    if (!n_ativo) {
-      Serial.println("-> ACAO RECOMENDADA: Acione o botao de Nitrogenio (N - Botao Branco) para BAIXAR o pH.");
-    } else {
-      Serial.println("-> STATUS EXCELENTE: Nitrogenio (N - Botao Branco) ativado e sendo absorvido perfeitamente pela planta.");
-    }
-    
+  if (g_previsao_chuva) {
+    // Previsão de chuva: bloqueia irrigação independente da umidade
+    deveIrrigar = false;
+  } else if (g_umidade < UMIDADE_MIN_LIGAR) {
+    // Solo seco e sem chuva prevista → Ligar bomba
+    deveIrrigar = true;
+  } else if (g_umidade >= UMIDADE_MAX_DESLIGAR) {
+    // Solo saturado → Desligar bomba (proteção)
+    deveIrrigar = false;
   } else {
-    Serial.println("STATUS: pH IDEAL (5.5 a 6.5) estabilizado!");
-    
-    // Função do Fósforo (P): Entra em cena quando o pH está perfeito
-    if (!p_ativo) {
-      Serial.println("-> ACAO RECOMENDADA: pH ideal atingido! Acione o botao de Fosforo (P - Botao Cinza) para estimular as raizes.");
-    } else {
-      Serial.println("-> STATUS EXCELENTE: Fosforo (P - Botao Cinza) ativado e sendo absorvido perfeitamente pela planta.");
-      
-      // Verifica se N ou K ficaram ligados "esquecidos", o que tiraria o pH do eixo
-      if (n_ativo || k_ativo) {
-        Serial.println("-> AVISO: Desligue os botoes N e/ou K para nao desestabilizar o pH novamente.");
-      }
-    }
+    // Zona intermediária: mantém estado atual (evita liga/desliga constante)
+    deveIrrigar = g_bomba_ligada;
   }
 
-  // --- REGRA DE IRRIGAÇÃO (Baseada exclusivamente na umidade) ---
-  if (previsao_chuva) {
-    // Se a previsão diz que vai chover, bloqueia a bomba para economizar recursos!
-    digitalWrite(RELE_BOMBA, LOW);
-    Serial.println("Bomba: DESLIGADA (Economizando agua, a chuva fara o trabalho!)");
+  // Atualiza estado do relé apenas se houve mudança (evita writes desnecessários)
+  if (deveIrrigar != g_bomba_ligada) {
+    g_bomba_ligada = deveIrrigar;
+    digitalWrite(PIN_RELAY, g_bomba_ligada ? LOW : HIGH);
+  }
+}
 
-  } else{
+/**
+ * verificarComandoSerial()
+ * Escuta o Monitor Serial para comandos de controle externo.
+ * Permite simular previsão do tempo sem alterar o hardware.
+ *
+ * Comandos aceitos:
+ *   CHUVA_ON  → g_previsao_chuva = true
+ *   CHUVA_OFF → g_previsao_chuva = false
+ */
+void verificarComandoSerial() {
+  if (Serial.available() > 0) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    cmd.toUpperCase();
 
-    if (umidade <= 50.0) {
-      digitalWrite(RELE_BOMBA, HIGH); // Liga o relé azul
-      Serial.println("Bomba: LIGADA (Solo seco. Irrigando...)");
-
-    } else if (umidade >= 80.0) {
-      digitalWrite(RELE_BOMBA, LOW); // Desliga o Relé Azul
-      Serial.println("Bomba: DESLIGADA (Umidade Alta Demais)");
-
+    if (cmd == "CHUVA_ON") {
+      g_previsao_chuva = true;
+      Serial.println(">>> [SISTEMA] Previsao de CHUVA ATIVADA - Irrigacao BLOQUEADA <<<");
+    } else if (cmd == "CHUVA_OFF") {
+      g_previsao_chuva = false;
+      Serial.println(">>> [SISTEMA] Previsao de chuva REMOVIDA - Irrigacao LIBERADA <<<");
     } else {
-      // Entre 50% e 80%, a planta não precisa de alteração no momento
-      digitalWrite(RELE_BOMBA, LOW);
-      Serial.println("Bomba: Desligada (Umidade na faixa de seguranca)");
+      Serial.print(">>> [SISTEMA] Comando desconhecido: ");
+      Serial.println(cmd);
     }
   }
+}
 
-  // Aguarda 2 segundos antes do próximo ciclo de leitura
-  delay(2000);
+/**
+ * imprimirRelatorio()
+ * Imprime o estado completo do sistema no Monitor Serial.
+ * Formato otimizado para coleta de dados e geração de histórico.
+ */
+void imprimirRelatorio() {
+  Serial.println("----------------------------------------------");
+  Serial.print("[Tempo] ");
+  Serial.print(millis() / 1000);
+  Serial.println(" s");
+
+  // Sensores
+  Serial.print("[DHT22] Umidade: ");
+  Serial.print(g_umidade, 1);
+  Serial.print("%  |  Temperatura: ");
+  Serial.print(g_temperatura, 1);
+  Serial.println(" C");
+
+  // pH com diagnóstico
+  Serial.print("[pH]    Valor: ");
+  Serial.print(g_ph, 2);
+  Serial.print("  |  Status: ");
+  if (g_ph < PH_IDEAL_MIN)       Serial.println("ACIDO - Aplicar Potassio (Btn K)");
+  else if (g_ph > PH_IDEAL_MAX)  Serial.println("ALCALINO - Solo basico demais");
+  else                           Serial.println("IDEAL");
+
+  // Bomba e previsão de chuva
+  Serial.print("[BOMBA] ");
+  Serial.print(g_bomba_ligada ? "LIGADA  " : "DESLIGADA");
+  Serial.print("  |  Previsao Chuva: ");
+  Serial.println(g_previsao_chuva ? "SIM (bloqueio ativo)" : "NAO");
+
+  // Nutrientes
+  Serial.print("[NPK]   N=");
+  Serial.print(g_cnt_nitrogenio);
+  Serial.print("  P=");
+  Serial.print(g_cnt_fosforo);
+  Serial.print("  K=");
+  Serial.println(g_cnt_potassio);
 }
